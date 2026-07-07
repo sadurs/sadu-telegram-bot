@@ -26,6 +26,7 @@ DISCOUNT_CODES = {
     "SR26": 10
 }
 
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
@@ -57,8 +58,10 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def next_order_no(order_id):
     return f"SR-{order_id:04d}"
+
 
 def calc_total(data):
     package_price = data.get("package_price", 0)
@@ -74,9 +77,10 @@ def calc_total(data):
     discount_percent = data.get("discount_percent", 0)
     discount_amount = round(subtotal * discount_percent / 100)
     total = subtotal - discount_amount
-
     addons_text = "\n".join(addon_lines) if addon_lines else "لا توجد إضافات"
+
     return addons_text, subtotal, discount_amount, total
+
 
 def save_order(data, user_id, full_message, addons_text, subtotal, discount_amount, total):
     conn = sqlite3.connect(DB_FILE)
@@ -118,12 +122,57 @@ def save_order(data, user_id, full_message, addons_text, subtotal, discount_amou
 
     return order_no
 
+
 def update_order_status(order_no, status):
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute("UPDATE orders SET status=? WHERE order_no=?", (status, order_no))
     conn.commit()
     conn.close()
+
+
+def fetch_orders(status=None, limit=10):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    if status:
+        cur.execute("""
+            SELECT order_no, name, phone, total, status, created_at
+            FROM orders
+            WHERE status=?
+            ORDER BY id DESC
+            LIMIT ?
+        """, (status, limit))
+    else:
+        cur.execute("""
+            SELECT order_no, name, phone, total, status, created_at
+            FROM orders
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
+
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def format_orders(rows, title):
+    if not rows:
+        return f"{title}\n\nلا توجد طلبات."
+
+    msg = f"{title}\n\n"
+    for order_no, name, phone, total, status, created_at in rows:
+        icon = "🆕" if status == "new" else "✅" if status == "accepted" else "❌"
+        msg += (
+            f"{icon} {order_no}\n"
+            f"👤 {name}\n"
+            f"📱 {phone}\n"
+            f"💰 {total} QAR\n"
+            f"📌 {status}\n"
+            f"🕒 {created_at}\n\n"
+        )
+    return msg
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -135,6 +184,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🚘 أهلاً بك في بوت SADU الرسمي\n\nاختر اللغة / Choose language:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    keyboard = [
+        [
+            InlineKeyboardButton("📋 آخر الطلبات", callback_data="admin_orders"),
+            InlineKeyboardButton("🆕 الجديدة", callback_data="admin_new"),
+        ],
+        [
+            InlineKeyboardButton("✅ المقبولة", callback_data="admin_accepted"),
+            InlineKeyboardButton("❌ المرفوضة", callback_data="admin_rejected"),
+        ],
+        [
+            InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_stats"),
+            InlineKeyboardButton("🎁 أكواد الخصم", callback_data="admin_discounts"),
+        ],
+    ]
+
+    await update.message.reply_text(
+        "🛠 لوحة تحكم SADU\n\nاختر من القائمة:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
 
 async def show_terms(q):
     keyboard = [
@@ -168,6 +243,7 @@ async def show_terms(q):
         disable_web_page_preview=True
     )
 
+
 async def show_packages(q):
     keyboard = [
         [InlineKeyboardButton("🎬 الأساسية - 100 QAR", callback_data="pkg_basic")],
@@ -175,6 +251,7 @@ async def show_packages(q):
         [InlineKeyboardButton("🚘 المتكاملة - 450 QAR", callback_data="pkg_complete")]
     ]
     await q.edit_message_text("📦 اختر الباقة المناسبة:", reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 async def show_addons(q, context):
     selected = context.user_data.get("addons", [])
@@ -191,12 +268,14 @@ async def show_addons(q, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+
 async def show_payment(q):
     keyboard = [
         [InlineKeyboardButton("💵 كاش / Cash", callback_data="pay_cash")],
         [InlineKeyboardButton("🔁 فورا / Fawra", callback_data="pay_fawra")]
     ]
     await q.edit_message_text("💳 اختر طريقة الدفع:", reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 async def ask_discount(q):
     keyboard = [
@@ -205,12 +284,60 @@ async def ask_discount(q):
     ]
     await q.edit_message_text("🎁 هل لديك كود خصم؟", reply_markup=InlineKeyboardMarkup(keyboard))
 
+
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data
 
-    if data.startswith("lang_"):
+    if data == "admin_orders":
+        await q.edit_message_text(format_orders(fetch_orders(None, 10), "📋 آخر الطلبات"))
+
+    elif data == "admin_new":
+        await q.edit_message_text(format_orders(fetch_orders("new", 10), "🆕 الطلبات الجديدة"))
+
+    elif data == "admin_accepted":
+        await q.edit_message_text(format_orders(fetch_orders("accepted", 10), "✅ الطلبات المقبولة"))
+
+    elif data == "admin_rejected":
+        await q.edit_message_text(format_orders(fetch_orders("rejected", 10), "❌ الطلبات المرفوضة"))
+
+    elif data == "admin_discounts":
+        msg = "🎁 أكواد الخصم الحالية:\n\n"
+        for code, percent in DISCOUNT_CODES.items():
+            msg += f"🏷️ {code} — {percent}%\n"
+        await q.edit_message_text(msg)
+
+    elif data == "admin_stats":
+        conn = sqlite3.connect(DB_FILE)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM orders")
+        total_orders = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM orders WHERE status='new'")
+        new_orders = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM orders WHERE status='accepted'")
+        accepted = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM orders WHERE status='rejected'")
+        rejected = cur.fetchone()[0]
+        cur.execute("SELECT COALESCE(SUM(total), 0) FROM orders WHERE status='accepted'")
+        revenue = cur.fetchone()[0]
+        conn.close()
+
+        await q.edit_message_text(
+            f"""
+📊 إحصائيات SADU
+
+📦 إجمالي الطلبات: {total_orders}
+🆕 الجديدة: {new_orders}
+✅ المقبولة: {accepted}
+❌ المرفوضة: {rejected}
+
+💰 إجمالي المقبول:
+{revenue} QAR
+"""
+        )
+
+    elif data.startswith("lang_"):
         context.user_data["lang"] = data.replace("lang_", "")
         await show_terms(q)
 
@@ -278,6 +405,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["rejecting_order_no"] = order_no
         await q.edit_message_text(f"❌ اكتب سبب رفض الطلب:\n🆔 {order_no}")
 
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     step = context.user_data.get("step")
     text = update.message.text.strip()
@@ -296,7 +424,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["discount_code"] = code
             context.user_data["discount_percent"] = DISCOUNT_CODES[code]
             context.user_data["step"] = "name"
-
             await update.message.reply_text(
                 f"🎉 تم تطبيق كود الخصم بنجاح!\n\n"
                 f"🏷️ كود الخصم: {code}\n"
@@ -304,10 +431,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "👤 اكتب اسمك الكامل:"
             )
         else:
-            await update.message.reply_text(
-                "❌ كود الخصم غير صحيح.\n\n"
-                "أعد كتابة الكود أو اكتب: تخطي"
-            )
+            await update.message.reply_text("❌ كود الخصم غير صحيح.\n\nأعد كتابة الكود أو اكتب: تخطي")
         return
 
     if step == "reject_reason":
@@ -366,6 +490,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     else:
         await update.message.reply_text("اكتب /start للبدء من جديد.")
+
 
 async def send_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
@@ -429,47 +554,7 @@ async def send_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🆔 رقم الطلب: {order_no}
 
-📦 الباقة:
-{data['package_name']}
-💰 سعر الباقة: {data['package_price']} QAR
-
-➕ الإضافات:
-{addons_text}
-
-💳 طريقة الدفع:
-{data['payment']}
-{payment_note}
-
-🎁 كود الخصم:
-{data.get('discount_code', 'لا يوجد')}
-
-🏷️ نسبة الخصم:
-{data.get('discount_percent', 0)}%
-
-💰 الإجمالي قبل الخصم:
-{subtotal} QAR
-
-🎁 قيمة الخصم:
-{discount_amount} QAR
-
-✅ الإجمالي بعد الخصم:
-{total} QAR
-
-👤 الاسم: {data['name']}
-📱 الهاتف: {data['phone']}
-📧 الإيميل: {data['email']}
-
-🚗 السيارة: {data['car']}
-📅 التاريخ: {data['date']}
-🕒 الوقت: {data['time']}
-
-📝 الملاحظات:
-{data['notes']}
-
-📜 وافق العميل على الشروط والأحكام وحق SADU في نشر المحتوى على TikTok:
-{TIKTOK_URL}
-
-🆔 Telegram ID: {user_id}
+{summary}
 """
 
     keyboard = [[
@@ -490,30 +575,12 @@ async def send_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
 
+
 async def orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
+    await update.message.reply_text(format_orders(fetch_orders(None, 10), "📋 آخر الطلبات"))
 
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT order_no, name, phone, total, status, created_at
-        FROM orders
-        ORDER BY id DESC
-        LIMIT 10
-    """)
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        await update.message.reply_text("لا توجد طلبات محفوظة.")
-        return
-
-    msg = "📋 آخر 10 طلبات:\n\n"
-    for order_no, name, phone, total, status, created_at in rows:
-        msg += f"{order_no} | {name} | {phone} | {total} QAR | {status}\n{created_at}\n\n"
-
-    await update.message.reply_text(msg)
 
 def main():
     if not BOT_TOKEN:
@@ -524,11 +591,13 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("orders", orders))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
