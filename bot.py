@@ -9,6 +9,7 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "6856205408"))
 DB_FILE = "sadu_orders.db"
 TIKTOK_URL = "https://www.tiktok.com/@ar.q6r"
 FAWRA_NAME = "ALIMRI"
+MOVMAX_IMAGE = "movmax.jpg"
 
 PACKAGES = {
     "basic": ("🎬 الباقة الأساسية / Basic", 100),
@@ -190,20 +191,25 @@ def format_orders(rows, title):
     return msg
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-
+def main_menu_keyboard(user_id):
     keyboard = [
         [InlineKeyboardButton("🚘 حجز جديد", callback_data="start_booking")],
+        [InlineKeyboardButton("🛒 متجر SADU", callback_data="store")],
         [InlineKeyboardButton("🔎 الاستعلام عن حالة الطلب", callback_data="check_order")],
     ]
 
-    if update.effective_user.id == ADMIN_CHAT_ID:
+    if user_id == ADMIN_CHAT_ID:
         keyboard.append([InlineKeyboardButton("🛠 لوحة التحكم", callback_data="admin_panel")])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
 
     await update.message.reply_text(
         "🚘 أهلاً بك في بوت SADU الرسمي\n\nاختر الخدمة المطلوبة:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=main_menu_keyboard(update.effective_user.id)
     )
 
 
@@ -236,6 +242,52 @@ async def send_admin_panel(message):
         "🛠 لوحة تحكم SADU\n\nاختر من القائمة:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+
+async def show_store(q):
+    caption = """
+🛒 متجر SADU
+
+🚗 MOVMAX Electronic Suction Cup + Blade Arm
+
+ستاند احترافي لتصوير السيارات والرولنق شوت، مزود بشفاط إلكتروني وذراع تثبيت يساعد على تقليل الاهتزاز أثناء التصوير.
+
+✅ المميزات:
+• شفاط إلكتروني لتثبيت أقوى
+• ذراع MOVMAX Blade Arm
+• مناسب لتصوير Rolling Shots
+• مناسب لصناع المحتوى ومصوري السيارات
+• يعطي لقطات أكثر ثباتًا وسلاسة
+
+📷 يدعم:
+• DJI Pocket 3
+• DJI Pocket 4
+• GoPro
+• Insta360
+• كاميرات الأكشن الخفيفة
+
+📌 الحالة:
+⏳ سيتوفر قريبًا
+
+للاستفسار:
+@sadu_services_bot
+"""
+
+    keyboard = [[InlineKeyboardButton("⬅️ رجوع", callback_data="back_start")]]
+
+    if os.path.exists(MOVMAX_IMAGE):
+        with open(MOVMAX_IMAGE, "rb") as photo:
+            await q.message.reply_photo(
+                photo=photo,
+                caption=caption,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        await q.delete_message()
+    else:
+        await q.edit_message_text(
+            caption + "\n\n⚠️ لم يتم العثور على صورة المنتج. تأكد أن اسم الصورة movmax.jpg",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 
 async def show_terms(q):
@@ -325,6 +377,15 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(
             "🌐 اختر اللغة / Choose language:",
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data == "store":
+        await show_store(q)
+
+    elif data == "back_start":
+        await q.edit_message_text(
+            "🚘 أهلاً بك في بوت SADU الرسمي\n\nاختر الخدمة المطلوبة:",
+            reply_markup=main_menu_keyboard(q.from_user.id)
         )
 
     elif data == "check_order":
