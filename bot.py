@@ -19,15 +19,26 @@ ADDONS = {
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    context.user_data["step"] = "name"
-    await update.message.reply_text("مرحبًا بك في SADU 🚘\nاكتب اسمك الكامل:")
+    keyboard = [
+        [InlineKeyboardButton("العربية", callback_data="lang_ar")],
+        [InlineKeyboardButton("English", callback_data="lang_en")]
+    ]
+    await update.message.reply_text(
+        "اختر اللغة / Choose language:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data
 
-    if data.startswith("pkg_"):
+    if data.startswith("lang_"):
+        context.user_data["lang"] = data.replace("lang_", "")
+        context.user_data["step"] = "name"
+        await q.edit_message_text("اكتب اسمك الكامل:" if context.user_data["lang"] == "ar" else "Enter your full name:")
+
+    elif data.startswith("pkg_"):
         key = data.replace("pkg_", "")
         context.user_data["package_name"], context.user_data["package_price"] = PACKAGES[key]
         context.user_data["addons"] = []
@@ -42,17 +53,25 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_addons(q, context)
 
     elif data == "done_addons":
+        await show_payment(q, context)
+
+    elif data.startswith("pay_"):
+        context.user_data["payment"] = "كاش / Cash" if data == "pay_cash" else "فورا / Fawra"
         await send_summary(q, context)
 
     elif data.startswith("accept_") or data.startswith("reject_"):
         action, user_id = data.split("_")
         user_id = int(user_id)
+
         if action == "accept":
-            await context.bot.send_message(user_id, "تم قبول طلبك ✅\nYour request has been accepted ✅")
-            await q.edit_message_text("تم قبول الطلب ✅")
+            msg = "تم قبول طلبك ✅\nYour request has been accepted ✅"
+            admin_msg = "تم قبول الطلب ✅"
         else:
-            await context.bot.send_message(user_id, "تم رفض طلبك ❌\nYour request has been rejected ❌")
-            await q.edit_message_text("تم رفض الطلب ❌")
+            msg = "تم رفض طلبك ❌\nYour request has been rejected ❌"
+            admin_msg = "تم رفض الطلب ❌"
+
+        await context.bot.send_message(chat_id=user_id, text=msg)
+        await q.edit_message_text(admin_msg)
 
 async def show_packages(update, context):
     keyboard = [
@@ -70,6 +89,13 @@ async def show_addons(q, context):
         keyboard.append([InlineKeyboardButton(f"{mark} {name} +{price} QAR", callback_data=f"addon_{key}")])
     keyboard.append([InlineKeyboardButton("تم اختيار الإضافات ✅", callback_data="done_addons")])
     await q.edit_message_text("اختر الإضافات المطلوبة:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def show_payment(q, context):
+    keyboard = [
+        [InlineKeyboardButton("كاش / Cash", callback_data="pay_cash")],
+        [InlineKeyboardButton("فورا / Fawra", callback_data="pay_fawra")]
+    ]
+    await q.edit_message_text("اختر طريقة الدفع:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     step = context.user_data.get("step")
@@ -115,13 +141,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_summary(q, context):
     data = context.user_data
-    package_name = data["package_name"]
-    package_price = data["package_price"]
-    addons = data.get("addons", [])
 
-    addon_lines = []
+    package_price = data["package_price"]
     addons_total = 0
-    for key in addons:
+    addon_lines = []
+
+    for key in data.get("addons", []):
         name, price = ADDONS[key]
         addon_lines.append(f"✅ {name}: +{price} QAR")
         addons_total += price
@@ -129,6 +154,10 @@ async def send_summary(q, context):
     addons_text = "\n".join(addon_lines) if addon_lines else "لا توجد إضافات"
     total = package_price + addons_total
     user_id = q.from_user.id
+
+    payment_note = ""
+    if data["payment"] == "فورا / Fawra":
+        payment_note = "\n🔁 اسم التحويل فورا: ALIMRI"
 
     summary = f"""
 🚘 طلب جديد من SADU
@@ -142,11 +171,15 @@ async def send_summary(q, context):
 🕒 الوقت: {data['time']}
 
 📦 الباقة:
-{package_name}
+{data['package_name']}
 السعر: {package_price} QAR
 
 ➕ الإضافات:
 {addons_text}
+
+💳 طريقة الدفع:
+{data['payment']}
+{payment_note}
 
 📝 الملاحظات:
 {data['notes']}
@@ -161,7 +194,11 @@ Telegram ID: {user_id}
         InlineKeyboardButton("رفض ❌", callback_data=f"reject_{user_id}")
     ]]
 
-    await q.message.reply_text("تم إرسال طلبك بنجاح ✅\nYour request has been sent successfully.")
+    client_msg = "تم إرسال طلبك بنجاح ✅\nYour request has been sent successfully."
+    if data["payment"] == "فورا / Fawra":
+        client_msg += "\n\nللدفع عبر فورا:\nاسم التحويل: ALIMRI"
+
+    await q.message.reply_text(client_msg)
     await context.bot.send_message(ADMIN_CHAT_ID, summary, reply_markup=InlineKeyboardMarkup(keyboard))
     context.user_data.clear()
 
