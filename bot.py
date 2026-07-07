@@ -22,9 +22,7 @@ ADDONS = {
     "music": ("🎵 إنشاء موسيقى AI", 100),
 }
 
-DISCOUNT_CODES = {
-    "SR26": 10
-}
+DISCOUNT_CODES = {"SR26": 10}
 
 
 def init_db():
@@ -64,7 +62,6 @@ def next_order_no(order_id):
 
 
 def calc_total(data):
-    package_price = data.get("package_price", 0)
     addons_total = 0
     addon_lines = []
 
@@ -73,12 +70,11 @@ def calc_total(data):
         addon_lines.append(f"{name}: +{price} QAR")
         addons_total += price
 
-    subtotal = package_price + addons_total
+    subtotal = data.get("package_price", 0) + addons_total
     discount_percent = data.get("discount_percent", 0)
     discount_amount = round(subtotal * discount_percent / 100)
     total = subtotal - discount_amount
     addons_text = "\n".join(addon_lines) if addon_lines else "لا توجد إضافات"
-
     return addons_text, subtotal, discount_amount, total
 
 
@@ -115,11 +111,10 @@ def save_order(data, user_id, full_message, addons_text, subtotal, discount_amou
 
     order_id = cur.lastrowid
     order_no = next_order_no(order_id)
-
     cur.execute("UPDATE orders SET order_no=? WHERE id=?", (order_no, order_id))
+
     conn.commit()
     conn.close()
-
     return order_no
 
 
@@ -129,6 +124,19 @@ def update_order_status(order_no, status):
     cur.execute("UPDATE orders SET status=? WHERE order_no=?", (status, order_no))
     conn.commit()
     conn.close()
+
+
+def get_order(order_no):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT order_no, user_id, name, phone, car, total, status, created_at
+        FROM orders
+        WHERE order_no=?
+    """, (order_no,))
+    row = cur.fetchone()
+    conn.close()
+    return row
 
 
 def fetch_orders(status=None, limit=10):
@@ -156,19 +164,27 @@ def fetch_orders(status=None, limit=10):
     return rows
 
 
+def format_status(status):
+    return {
+        "new": "🟡 قيد المراجعة",
+        "accepted": "✅ مقبول",
+        "rejected": "❌ مرفوض",
+        "completed": "🎬 مكتمل وتم إرسال المقطع",
+    }.get(status, status)
+
+
 def format_orders(rows, title):
     if not rows:
         return f"{title}\n\nلا توجد طلبات."
 
     msg = f"{title}\n\n"
     for order_no, name, phone, total, status, created_at in rows:
-        icon = "🆕" if status == "new" else "✅" if status == "accepted" else "❌"
         msg += (
-            f"{icon} {order_no}\n"
+            f"🆔 {order_no}\n"
             f"👤 {name}\n"
             f"📱 {phone}\n"
             f"💰 {total} QAR\n"
-            f"📌 {status}\n"
+            f"📌 {format_status(status)}\n"
             f"🕒 {created_at}\n\n"
         )
     return msg
@@ -176,12 +192,17 @@ def format_orders(rows, title):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
+
     keyboard = [
-        [InlineKeyboardButton("🇶🇦 العربية", callback_data="lang_ar")],
-        [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+        [InlineKeyboardButton("🚘 حجز جديد", callback_data="start_booking")],
+        [InlineKeyboardButton("🔎 الاستعلام عن حالة الطلب", callback_data="check_order")],
     ]
+
+    if update.effective_user.id == ADMIN_CHAT_ID:
+        keyboard.append([InlineKeyboardButton("🛠 لوحة التحكم", callback_data="admin_panel")])
+
     await update.message.reply_text(
-        "🚘 أهلاً بك في بوت SADU الرسمي\n\nاختر اللغة / Choose language:",
+        "🚘 أهلاً بك في بوت SADU الرسمي\n\nاختر الخدمة المطلوبة:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -189,7 +210,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
+    await send_admin_panel(update.message)
 
+
+async def send_admin_panel(message):
     keyboard = [
         [
             InlineKeyboardButton("📋 آخر الطلبات", callback_data="admin_orders"),
@@ -200,12 +224,15 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("❌ المرفوضة", callback_data="admin_rejected"),
         ],
         [
+            InlineKeyboardButton("🎬 إرسال مقطع للعميل", callback_data="admin_send_video"),
+        ],
+        [
             InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_stats"),
             InlineKeyboardButton("🎁 أكواد الخصم", callback_data="admin_discounts"),
         ],
     ]
 
-    await update.message.reply_text(
+    await message.reply_text(
         "🛠 لوحة تحكم SADU\n\nاختر من القائمة:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -290,7 +317,35 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     data = q.data
 
-    if data == "admin_orders":
+    if data == "start_booking":
+        keyboard = [
+            [InlineKeyboardButton("🇶🇦 العربية", callback_data="lang_ar")],
+            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+        ]
+        await q.edit_message_text(
+            "🌐 اختر اللغة / Choose language:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data == "check_order":
+        context.user_data["step"] = "check_order"
+        await q.edit_message_text("🔎 اكتب رقم الطلب مثل:\nSR-0001")
+
+    elif data == "admin_panel":
+        if q.from_user.id != ADMIN_CHAT_ID:
+            return
+        keyboard = [
+            [InlineKeyboardButton("📋 آخر الطلبات", callback_data="admin_orders")],
+            [InlineKeyboardButton("🆕 الطلبات الجديدة", callback_data="admin_new")],
+            [InlineKeyboardButton("✅ المقبولة", callback_data="admin_accepted")],
+            [InlineKeyboardButton("❌ المرفوضة", callback_data="admin_rejected")],
+            [InlineKeyboardButton("🎬 إرسال مقطع للعميل", callback_data="admin_send_video")],
+            [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_stats")],
+            [InlineKeyboardButton("🎁 أكواد الخصم", callback_data="admin_discounts")],
+        ]
+        await q.edit_message_text("🛠 لوحة تحكم SADU", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "admin_orders":
         await q.edit_message_text(format_orders(fetch_orders(None, 10), "📋 آخر الطلبات"))
 
     elif data == "admin_new":
@@ -301,6 +356,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "admin_rejected":
         await q.edit_message_text(format_orders(fetch_orders("rejected", 10), "❌ الطلبات المرفوضة"))
+
+    elif data == "admin_send_video":
+        if q.from_user.id != ADMIN_CHAT_ID:
+            return
+        context.user_data["step"] = "delivery_order_no"
+        await q.edit_message_text("🎬 اكتب رقم الطلب الذي تريد إرسال المقطع له:\nمثال: SR-0001")
 
     elif data == "admin_discounts":
         msg = "🎁 أكواد الخصم الحالية:\n\n"
@@ -319,7 +380,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         accepted = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM orders WHERE status='rejected'")
         rejected = cur.fetchone()[0]
-        cur.execute("SELECT COALESCE(SUM(total), 0) FROM orders WHERE status='accepted'")
+        cur.execute("SELECT COUNT(*) FROM orders WHERE status='completed'")
+        completed = cur.fetchone()[0]
+        cur.execute("SELECT COALESCE(SUM(total), 0) FROM orders WHERE status IN ('accepted','completed')")
         revenue = cur.fetchone()[0]
         conn.close()
 
@@ -331,8 +394,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🆕 الجديدة: {new_orders}
 ✅ المقبولة: {accepted}
 ❌ المرفوضة: {rejected}
+🎬 المكتملة: {completed}
 
-💰 إجمالي المقبول:
+💰 إجمالي المقبول والمكتمل:
 {revenue} QAR
 """
         )
@@ -409,6 +473,57 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     step = context.user_data.get("step")
     text = update.message.text.strip()
+
+    if step == "check_order":
+        order_no = text.upper().strip()
+        row = get_order(order_no)
+
+        if not row:
+            await update.message.reply_text("❌ لم يتم العثور على الطلب.\nتأكد من رقم الطلب وحاول مرة أخرى.")
+            return
+
+        order_no, user_id, name, phone, car, total, status, created_at = row
+
+        if update.effective_user.id != user_id and update.effective_user.id != ADMIN_CHAT_ID:
+            await update.message.reply_text("❌ لا يمكنك الاستعلام عن هذا الطلب.")
+            return
+
+        await update.message.reply_text(
+            f"""
+📋 حالة الطلب
+
+🆔 رقم الطلب: {order_no}
+👤 الاسم: {name}
+🚗 السيارة: {car}
+💰 الإجمالي: {total} QAR
+📌 الحالة: {format_status(status)}
+🕒 تاريخ الطلب: {created_at}
+"""
+        )
+        context.user_data.clear()
+        return
+
+    if step == "delivery_order_no":
+        if update.effective_user.id != ADMIN_CHAT_ID:
+            return
+
+        order_no = text.upper().strip()
+        row = get_order(order_no)
+
+        if not row:
+            await update.message.reply_text("❌ رقم الطلب غير موجود.")
+            return
+
+        context.user_data["delivery_order_no"] = order_no
+        context.user_data["delivery_user_id"] = row[1]
+        context.user_data["step"] = "delivery_file"
+
+        await update.message.reply_text(
+            "🎬 الآن أرسل المقطع كملف وليس فيديو:\n\n"
+            "اضغط 📎 > File / ملف > اختر المقطع.\n\n"
+            "بهذه الطريقة يصل للعميل بأعلى جودة."
+        )
+        return
 
     if step == "discount_code":
         code = text.upper().strip()
@@ -490,6 +605,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     else:
         await update.message.reply_text("اكتب /start للبدء من جديد.")
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    if context.user_data.get("step") != "delivery_file":
+        return
+
+    order_no = context.user_data["delivery_order_no"]
+    user_id = context.user_data["delivery_user_id"]
+    document = update.message.document
+
+    await context.bot.send_document(
+        chat_id=user_id,
+        document=document.file_id,
+        caption=(
+            f"🎬 تم الانتهاء من مقطعك بنجاح!\n\n"
+            f"🆔 رقم الطلب: {order_no}\n\n"
+            "تم إرسال المقطع لك كملف للحفاظ على أعلى جودة.\n\n"
+            "شكراً لاختيارك SADU 🚘"
+        )
+    )
+
+    update_order_status(order_no, "completed")
+
+    await update.message.reply_text(
+        f"✅ تم إرسال المقطع للعميل بأعلى جودة.\n\n🆔 {order_no}\n📌 الحالة: مكتمل"
+    )
+
+    context.user_data.clear()
+
+
+async def handle_video_wrong(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    if context.user_data.get("step") == "delivery_file":
+        await update.message.reply_text(
+            "⚠️ أرسلته كفيديو، وهذا قد يقلل الجودة.\n\n"
+            "لأعلى جودة:\n"
+            "اضغط 📎 > File / ملف > اختر المقطع."
+        )
 
 
 async def send_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -576,12 +734,6 @@ async def send_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
 
-async def orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_CHAT_ID:
-        return
-    await update.message.reply_text(format_orders(fetch_orders(None, 10), "📋 آخر الطلبات"))
-
-
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
@@ -592,8 +744,9 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CommandHandler("orders", orders))
     app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(MessageHandler(filters.VIDEO, handle_video_wrong))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     app.run_polling()
