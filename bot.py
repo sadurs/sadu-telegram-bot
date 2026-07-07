@@ -28,67 +28,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    data = q.data
-
-    if data.startswith("lang_"):
-        context.user_data["lang"] = data.replace("lang_", "")
-        context.user_data["step"] = "name"
-        await q.edit_message_text("👤 اكتب اسمك الكامل:")
-
-    elif data.startswith("pkg_"):
-        key = data.replace("pkg_", "")
-        context.user_data["package_name"], context.user_data["package_price"] = PACKAGES[key]
-        context.user_data["addons"] = []
-        await show_addons(q, context)
-
-    elif data.startswith("addon_"):
-        key = data.replace("addon_", "")
-        if key in context.user_data["addons"]:
-            context.user_data["addons"].remove(key)
-        else:
-            context.user_data["addons"].append(key)
-        await show_addons(q, context)
-
-    elif data == "done_addons":
-        await show_payment(q)
-
-    elif data.startswith("pay_"):
-        context.user_data["payment"] = "💵 كاش / Cash" if data == "pay_cash" else "🔁 فورا / Fawra"
-        await send_summary(q, context)
-
-    elif data.startswith("accept_"):
-        user_id = int(data.replace("accept_", ""))
-
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=(
-                "✅ تم قبول طلبك\n\n"
-                "يرجى إتمام الدفع حسب الطريقة التي اخترتها:\n\n"
-                "💵 الكاش: يتم الدفع عند التصوير.\n"
-                "🔁 فورا: التحويل إلى الاسم التالي:\n"
-                "ALIMRI\n\n"
-                "بعد الدفع، أرسل صورة التحويل هنا.\n\n"
-                "شكراً لاختيارك SADU 🚘"
-            )
-        )
-        await q.edit_message_text("✅ تم قبول الطلب وإرسال تعليمات الدفع للعميل.")
-
-    elif data.startswith("reject_"):
-        user_id = int(data.replace("reject_", ""))
-        context.user_data["step"] = "reject_reason"
-        context.user_data["rejecting_user_id"] = user_id
-        await q.edit_message_text("❌ اكتب سبب رفض الطلب، وسيتم إرساله للعميل:")
-
-async def show_packages(update, context):
+async def show_packages(q, context):
     keyboard = [
         [InlineKeyboardButton("🎬 الأساسية - 100 QAR", callback_data="pkg_basic")],
         [InlineKeyboardButton("🎥 الاحترافية - 200 QAR", callback_data="pkg_pro")],
         [InlineKeyboardButton("🚘 المتكاملة - 450 QAR", callback_data="pkg_complete")],
     ]
-    await update.message.reply_text("📦 اختر الباقة المناسبة:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await q.edit_message_text("📦 اختر الباقة المناسبة:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def show_addons(q, context):
     selected = context.user_data.get("addons", [])
@@ -112,6 +58,61 @@ async def show_payment(q):
     ]
     await q.edit_message_text("💳 اختر طريقة الدفع:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    data = q.data
+
+    if data.startswith("lang_"):
+        context.user_data["lang"] = data.replace("lang_", "")
+        await show_packages(q, context)
+
+    elif data.startswith("pkg_"):
+        key = data.replace("pkg_", "")
+        context.user_data["package_name"], context.user_data["package_price"] = PACKAGES[key]
+        context.user_data["addons"] = []
+        await show_addons(q, context)
+
+    elif data.startswith("addon_"):
+        key = data.replace("addon_", "")
+        if key in context.user_data["addons"]:
+            context.user_data["addons"].remove(key)
+        else:
+            context.user_data["addons"].append(key)
+        await show_addons(q, context)
+
+    elif data == "done_addons":
+        await show_payment(q)
+
+    elif data.startswith("pay_"):
+        context.user_data["payment"] = "💵 كاش / Cash" if data == "pay_cash" else "🔁 فورا / Fawra"
+        context.user_data["step"] = "name"
+        await q.edit_message_text("👤 اكتب اسمك الكامل:")
+
+    elif data.startswith("accept_"):
+        user_id = int(data.replace("accept_", ""))
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "🎉 تم قبول طلبك بنجاح!\n\n"
+                "شكراً لاختيارك SADU 🚘\n\n"
+                "📱 سيتم التواصل معك عبر واتساب لتحديد موعد ومكان التصوير.\n\n"
+                "💳 طريقة الدفع:\n"
+                "إذا اخترت الكاش: يتم الدفع يوم التصوير.\n"
+                "إذا اخترت فورا: التحويل إلى الاسم التالي:\n"
+                "👤 ALIMRI\n\n"
+                "📤 بعد التحويل يمكنك إرسال صورة الإيصال داخل هذا البوت."
+            )
+        )
+        await q.edit_message_text("✅ تم قبول الطلب وإرسال رسالة القبول للعميل.")
+
+    elif data.startswith("reject_"):
+        user_id = int(data.replace("reject_", ""))
+        context.user_data["step"] = "reject_reason"
+        context.user_data["rejecting_user_id"] = user_id
+        await q.edit_message_text("❌ اكتب سبب رفض الطلب، وسيتم إرساله للعميل:")
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     step = context.user_data.get("step")
     text = update.message.text.strip()
@@ -120,7 +121,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = context.user_data.get("rejecting_user_id")
         await context.bot.send_message(
             chat_id=user_id,
-            text=f"❌ تم رفض طلبك\n\n📝 سبب الرفض:\n{text}\n\nيمكنك تعديل الطلب والمحاولة مرة أخرى."
+            text=(
+                "❌ نعتذر، لم يتم قبول طلبك.\n\n"
+                f"📝 سبب الرفض:\n{text}\n\n"
+                "إذا رغبت في تعديل الطلب يمكنك إرسال طلب جديد في أي وقت.\n\n"
+                "شكراً لاختيارك SADU 🚘"
+            )
         )
         await update.message.reply_text("✅ تم إرسال سبب الرفض للعميل.")
         context.user_data.clear()
@@ -158,14 +164,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif step == "notes":
         context.user_data["notes"] = text
-        context.user_data["step"] = "package"
-        await show_packages(update, context)
+        await send_summary_from_text(update, context)
 
     else:
         await update.message.reply_text("اكتب /start للبدء من جديد.")
 
-async def send_summary(q, context):
+async def send_summary_from_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
+
     package_price = data["package_price"]
     addons_total = 0
     addon_lines = []
@@ -177,7 +183,7 @@ async def send_summary(q, context):
 
     addons_text = "\n".join(addon_lines) if addon_lines else "لا توجد إضافات"
     total = package_price + addons_total
-    user_id = q.from_user.id
+    user_id = update.effective_user.id
 
     payment_note = ""
     if data["payment"] == "🔁 فورا / Fawra":
@@ -185,14 +191,6 @@ async def send_summary(q, context):
 
     summary = f"""
 🚘 طلب جديد من SADU
-
-👤 الاسم: {data['name']}
-📱 الهاتف: {data['phone']}
-📧 الإيميل: {data['email']}
-
-🚗 السيارة: {data['car']}
-📅 التاريخ: {data['date']}
-🕒 الوقت: {data['time']}
 
 📦 الباقة:
 {data['package_name']}
@@ -204,6 +202,14 @@ async def send_summary(q, context):
 💳 طريقة الدفع:
 {data['payment']}
 {payment_note}
+
+👤 الاسم: {data['name']}
+📱 الهاتف: {data['phone']}
+📧 الإيميل: {data['email']}
+
+🚗 السيارة: {data['car']}
+📅 التاريخ: {data['date']}
+🕒 الوقت: {data['time']}
 
 📝 الملاحظات:
 {data['notes']}
@@ -218,7 +224,7 @@ async def send_summary(q, context):
         InlineKeyboardButton("❌ رفض الطلب", callback_data=f"reject_{user_id}")
     ]]
 
-    await q.message.reply_text(
+    await update.message.reply_text(
         "✅ تم إرسال طلبك بنجاح\n\nسيتم مراجعة الطلب والرد عليك قريبًا."
     )
 
